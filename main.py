@@ -1,53 +1,60 @@
+#import package:
+
+from caplena.endpoints.projects_endpoint import ProjectDetail
 import caplena
 import pandas
+import dotenv
+import os
+#________________________________________________________________________________________________________
+#Load varaible in env file:
 
-API_KEY = ''
-UNIQUE_IDENTIFIER_COL = "ID" # This is used to merge the row which is across multiple projects
-CATEGORIES_TO_EXCLUDE = ["OTHER", "NULL"] #Name of categories to exclude (not codes, will add this functionality later)
-file_name = ".csv"
-project_names = ["", ""]
+# if dotenv.find_dotenv():
+#     dotenv.load_dotenv()
+#________________________________________________________________________________________________________
+#create function:
 
-
-def column_dic(project):
-    """Create a dictionary with Caplena colum Reference as keys and Column names as values"""
-    column_dic = {}
+def column_dic(project: ProjectDetail) -> dict:
+    """This takes a dataframe and creates is a dictionary
+        of Caplena IDs and the given name of the column. caplena_ref:given_name"""
+    col_dic = {}
     for column in project.columns:
-        column_dic.update({column.ref: column.name})
-    return column_dic
+        col_dic.update({column.ref: column.name})
+    return col_dic
+#________________________________________________________________________________________________________
+#set varaibles:
 
+API_KEY = ""
+ID_COL_NAME = "ID"
+PATH = ""
+OUTPUT_NAME = ".csv"
+PROJECTS = [""]
+EXCLUDED_CATEGORIES = ["NONE"]
+#________________________________________________________________________________________________________
 
-def process_row(row, column_names):
-    """this is used to process a project row. It excludes unnecessary categories.
-        It returns a dictionary of column_name: value """
-
-    row_dic = {}
-    for column in row.columns:
-        name = column_names[column.ref]
-        if column.type == "text_to_analyze":
-            ref_to_val = {name: column.value}
-            row_dic.update(ref_to_val)
-            for topic in column.topics:
-                if topic.category not in CATEGORIES_TO_EXCLUDE:
-                    ref_to_val_topic = {f"{name}: {topic.category}: {topic.label}": 1}
-                    row_dic.update(ref_to_val_topic)
+def main():
+    #extract data
+    client = caplena.Client(api_key=API_KEY) #opens client
+    for project in PROJECTS: #loop through all project listed
+        records = []
+        project = client.projects.retrieve(id=project) #get project from caplena
+        column_names = column_dic(project) #create a lookup dictionary
+        rows = project.list_rows() #get a list of the rows.
+        for row in rows: #loop through the rows
+            row_dic = {}
+            for col in row.columns: #loop through columns in rows
+                name = column_names[col.ref] #get the real name of the column
+                row_dic.update({name: col.value})
+                if col.type == "text_to_analyze": #check if it a text to analyse column
+                    [row_dic.update({f"{name}: {topic.category}: {topic.label}": 1})
+                     for topic in col.topics if topic.category not in EXCLUDED_CATEGORIES] #process  the codes in a text to analyse column
+            records.append(row_dic) #append row dic to records list
+        if 'df' not in locals():
+            df = pandas.DataFrame(records) #create dataframe for records
         else:
-            ref_to_val = {name: column.value}
-            row_dic.update(ref_to_val)
-    return row_dic
+            df = df.merge(pandas.DataFrame(records), on=ID_COL_NAME, how='left') #left join dataframe to get columns held across different projects
+
+    df.to_csv(os.path.join(PATH, OUTPUT_NAME), index=False, encoding="utf-8") #save it into a file
 
 
-for project_name in project_names:
-    rows_list = []
-    client = caplena.Client(api_key=API_KEY)
-    project = client.projects.retrieve(id=project_name)
-    column_names = column_dic(project)
-    rows = project.list_rows()
-    for row in rows:
-        rows_list.append(process_row(row, column_names))
-    if 'df' not in locals():
-        df = pandas.DataFrame(rows_list)
-    else:
-        temp_df = pandas.DataFrame(rows_list)
-        df = df.merge(temp_df, on=UNIQUE_IDENTIFIER_COL, how='left')
-
-df.to_csv(file_name, index=False, encoding="utf-8")
+if __name__ == '__main__':
+    main()
